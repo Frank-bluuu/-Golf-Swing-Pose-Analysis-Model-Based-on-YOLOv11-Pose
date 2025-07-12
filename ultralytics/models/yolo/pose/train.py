@@ -63,7 +63,6 @@ class PoseTrainer(yolo.detect.DetectionTrainer):
 
     def get_validator(self):
         """Returns an instance of the PoseValidator class for validation."""
-        # self.loss_names = "box_loss", "pose_loss", "kobj_loss", "cls_loss", "dfl_loss"    # kong
         # p_C_loss == pose_club_loss
         self.loss_names = "box_loss", "pose_loss", "kobj_loss", "cls_loss", "p_C_loss", "dfl_loss"
         return yolo.pose.PoseValidator(

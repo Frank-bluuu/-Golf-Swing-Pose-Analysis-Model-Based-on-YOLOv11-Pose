@@ -67,7 +67,6 @@ class PoseValidator(DetectionValidator):
 
     def get_desc(self):
         """Return description of evaluation metrics in string format."""
-        # return ("%22s" + "%11s" * 10) % ( # kong
         return ("%22s" + "%11s" * 14) % (
             "Class",
             "Images",
@@ -80,23 +79,19 @@ class PoseValidator(DetectionValidator):
             "R",
             "mAP50",
             "mAP50-95)",
-            # ================= kong =================
             "Pose_club(P",
             "R",
             "mAP50",
             "mAP50-95)",
-            # ================= kong =================
         )
 
     def init_metrics(self, model):
         """Initialize pose estimation metrics for YOLO model."""
         super().init_metrics(model)
         self.kpt_shape = self.data["kpt_shape"]
-        # is_pose = self.kpt_shape == [17, 3] # kong
-        is_pose = self.kpt_shape == [19, 3] if OKS_SIGMA.shape == [19] else self.kpt_shape == [17, 3]  # kong
+        is_pose = self.kpt_shape == [19, 3] if OKS_SIGMA.shape == [19] else self.kpt_shape == [17, 3]
         nkpt = self.kpt_shape[0]
         self.sigma = OKS_SIGMA if is_pose else np.ones(nkpt) / nkpt
-        # self.stats = dict(tp_p=[], tp=[], conf=[], pred_cls=[], target_cls=[], target_img=[]) # kong
         self.stats = dict(tp_p=[], tp=[], tp_p_club=[],conf=[], pred_cls=[], target_cls=[], target_img=[])
 
     def _prepare_batch(self, si, batch):
@@ -138,9 +133,7 @@ class PoseValidator(DetectionValidator):
                 pred_cls=torch.zeros(0, device=self.device),
                 tp=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
                 tp_p=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
-                # ================= kong =================
                 tp_p_club=torch.zeros(npr, self.niou, dtype=torch.bool, device=self.device),
-                # ================= kong =================
             )
             pbatch = self._prepare_batch(si, batch)
             cls, bbox = pbatch.pop("cls"), pbatch.pop("bbox")
@@ -164,22 +157,18 @@ class PoseValidator(DetectionValidator):
 
             # Evaluate
             if nl:
-                stat["tp"] = self._process_batch(predn, bbox, cls)  # 边界框
-                stat["tp_p"] = self._process_batch(predn, bbox, cls, pred_kpts, pbatch["kpts"]) # 姿态关键点
-                # ================= kong =================
-                # =========== 计算球杆关键点匹配 ============
+                stat["tp"] = self._process_batch(predn, bbox, cls)
+                stat["tp_p"] = self._process_batch(predn, bbox, cls, pred_kpts, pbatch["kpts"])
                 stat["tp_p_club"] = self._process_batch_club(predn, bbox, cls, pred_kpts, pbatch["kpts"])
 
             count1=torch.sum(stat["tp"] ).item()
             count2=torch.sum(stat["tp_p"] ).item()
-            count3=torch.sum(stat["tp_p_club"] ).item() # kong
+            count3=torch.sum(stat["tp_p_club"] ).item()
 
 
-                # ================= kong =================
             if self.args.plots:
                 self.confusion_matrix.process_batch(predn, bbox, cls)
 
-            # 保存统计信息
             for k in self.stats.keys():
                 self.stats[k].append(stat[k])
 
@@ -227,7 +216,6 @@ class PoseValidator(DetectionValidator):
         return self.match_predictions(detections[:, 5], gt_cls, iou)
 
 
-    # ================= kong =================
     def _process_batch_club(self, detections, gt_bboxes, gt_cls, pred_kpts=None, gt_kpts=None):
         """ 处理球杆关键点的匹配 """
         if pred_kpts is not None and gt_kpts is not None:
@@ -235,22 +223,10 @@ class PoseValidator(DetectionValidator):
             area = ops.xyxy2xywh(gt_bboxes)[:, 2:].prod(1) * 0.53
             iou = kpt_iou_club(gt_kpts, pred_kpts, sigma=self.sigma[11:13], area=area)
         else:
-            """
-            当 pred_kpts（预测的关键点）或 gt_kpts（真实的关键点）为空时，执行这个分支
-                表示当前图像中没有预测的球杆关键点或真实的球杆关键点
-
-            当图像中没有球杆关键点（预测或真实）时，这个零矩阵确保：
-                所有球杆关键点预测都被视为错误（FP）
-                所有真实的球杆关键点都被视为未被检测到（FN）
-
-            这个零矩阵表示所有预测与所有真实目标之间的 IoU（Intersection over Union）都是 0
-                这相当于表示没有任何预测与任何真实目标匹配
-            """
             iou = torch.zeros((len(gt_bboxes), len(detections)), device=self.device)
 
         return self.match_predictions(detections[:, 5], gt_cls, iou)
 
-    # ================= kong =================
 
     def plot_val_samples(self, batch, ni):
         """Plot and save validation set samples with ground truth bounding boxes and keypoints."""

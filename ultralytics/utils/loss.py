@@ -63,7 +63,6 @@ class FocalLoss(nn.Module):
 
 
 class DFLoss(nn.Module):
-    # 焦点损失的特殊形式，用于边界框回归
     """Criterion class for computing Distribution Focal Loss (DFL)."""
 
     def __init__(self, reg_max=16) -> None:
@@ -106,7 +105,7 @@ class BboxLoss(nn.Module):
         else:
             loss_dfl = torch.tensor(0.0).to(pred_dist.device)
 
-        return loss_iou, loss_dfl # 返回IOU损失和DFL损失
+        return loss_iou, loss_dfl 
 
 
 class RotatedBboxLoss(BboxLoss):
@@ -134,93 +133,55 @@ class RotatedBboxLoss(BboxLoss):
 
 
 class KeypointLoss(nn.Module):
-    """Criterion class for computing keypoint losses."""
-    """ kong
-    Criterion class for computing keypoint losses with separate weights for club keypoints.
     """
+    Criterion class for computing keypoint losses.
+    Criterion class for computing keypoint losses with separate weights for club keypoints."""
 
-    # def __init__(self, sigmas) -> None:
-    def __init__(self, sigmas, club_kpts_indices, club_weight): # kong
-        """Initialize the KeypointLoss class with keypoint sigmas."""
+    def __init__(self, sigmas, club_kpts_indices, club_weight):
         """
-        # kong
+        Initialize the KeypointLoss class with keypoint sigmas.
+        Initialize the KeypointLoss class with OKS sigmas and club keypoints.
         Args:
             sigmas (torch.Tensor): OKS sigmas for each keypoint
-            club_kpts_indices (list): Indices of club keypoints 球杆上的关键点 # kong
-            club_weight (float): Weight factor for club keypoints 球杆上关键点权重 # kong
-        """
+            club_kpts_indices (list): Indices of club keypoints 
+            club_weight (float): Weight factor for club keypoints """
+        
         super().__init__()
         self.sigmas = sigmas
 
-        # ================= kong =================
         self.club_kpts_indices = club_kpts_indices
         self.club_weight = club_weight
-        # ================= kong =================
 
     def forward(self, pred_kpts, gt_kpts, kpt_mask, area):
-        """Calculate keypoint loss factor and Euclidean distance loss for keypoints."""
-        """ kong
+        """
+        Calculate keypoint loss factor and Euclidean distance loss for keypoints.
         Calculate keypoint loss with separate weights for club keypoints.
-        计算球杆关键点的额外损失
         Calculate keypoint loss factor and Euclidean distance loss for body keypoints
-        计算所有预测和实际关键点的关键点损失因子和欧式距离损失
         Args:
             pred_kpts (torch.Tensor): Predicted keypoints, shape [n, num_kpts, 2]
             gt_kpts (torch.Tensor): Ground truth keypoints, shape [n, num_kpts, 2]
             kpt_mask (torch.Tensor): Keypoint visibility mask, shape [n, num_kpts]
-            area (torch.Tensor): Area of each instance, shape [n, 1]
+            area (torch.Tensor): Area of each instance, shape [n, 1]"""
 
-        Returns:
-            torch.Tensor: Weighted keypoint loss
-        """
-
-        # Calculate Euclidean distance squared 计算欧式距离的平方
+        # Calculate Euclidean distance squared 
         d = (pred_kpts[..., 0] - gt_kpts[..., 0]).pow(2) + (pred_kpts[..., 1] - gt_kpts[..., 1]).pow(2)
-        # 计算预测关键点和真实关键点之间的欧式距离的平方。这里分别计算了x坐标和y坐标的差值的平方，然后将它们相加
 
-        # ================= kong =================
         #   Create weight matrix - higher weight for club keypoints
-        #   动态权重掩码,创建基础权重
-        #   创建与kpt_mask同形的全1权重矩阵
         weights = torch.ones_like(kpt_mask, dtype=torch.float32)
         if self.club_weight is not None:
-        #   运行时将球杆关键点位置替换为高权重（如3.0）
             weights[:, self.club_kpts_indices] = self.club_weight
-        # 权重与下面的损失同步计算，减少额外操作
-        # ================= kong =================
 
         # Calculate per-keypoint loss factor
-        # 损失计算
-        # 计算每个关键点损失因子：该组关键点数量 / 可见关键点数，得到每个样本的关键点损失因子
         kpt_loss_factor = kpt_mask.shape[1] / (torch.sum(kpt_mask != 0, dim=1) + 1e-9)
-        # kpts_loss (OKS loss) 计算
-        # e = d / (2 * (area * self.sigmas) ** 2 + 1e-9)  # from formula
 
         # Calculate exponential term
-        """ 计算
-                调整后的欧几里得距离损失 。这里使用了 COCO 评估公式中的方法。
-                d 是欧几里得距离的平方。
-                (2 * self.sigmas).pow(2) 是标准差的平方。
-                area + 1e-9 是目标边界框的面积，加上 1e-9 以避免数值不稳定
-        """
-        # self.sigmas = self.sigmas[11:13] if d.shape[1] == 2 else self.sigmas
         e = d / ((2 * self.sigmas).pow(2) * (area + 1e-9) * 2)  # from cocoeval
 
-        # ================= kong =================
-        # Apply weights to loss components计算最终的关键点损失
-        """ 1 - torch.exp(-e) ：将调整后的欧几里得距离损失通过指数函数进行调整，使其在 [0, 1] 范围内。
-            kpt_mask ：将调整后的损失与关键点掩码相乘，忽略不可见的关键点。
-            kpt_loss_factor.view(-1, 1) ：将关键点损失因子扩展为与损失张量形状兼容的形状。
-            .mean() ：对所有样本和关键点的损失取平均值，得到最终的损失值"""
+        # Apply weights to loss components
         weighted_loss = kpt_loss_factor.view(-1, 1) * ((1 - torch.exp(-e)) * kpt_mask * weights)
-        # 球杆关键点损失计算
         weighted_club_loss = kpt_loss_factor.view(-1, 1) * ((1 - torch.exp(-e[:,11:13])) * kpt_mask[:,11:13] * weights[:,11:13])
-        # ================= kong =================
 
-        # return (kpt_loss_factor.view(-1, 1) * ((1 - torch.exp(-e)) * kpt_mask)).mean()
         return weighted_loss.mean(), weighted_club_loss.mean()
-        # 在v8PoseLoss中调用
-        # kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)
 
 
 class v8DetectionLoss:
@@ -522,49 +483,28 @@ class v8PoseLoss(v8DetectionLoss):
 
         Args:
             model (nn.Module): YOLO model
-            # kong
             club_kpts_indices (list): Indices of club keypoints,default: club_kpts_indices = [11,12]
-            club_weight (float): Weight factor for club keypoints, default == None, club_weight=3.0
+            club_weight (float): Weight factor for club keypoints, default == None, E.g club_weight=3.0
         """
         super().__init__(model)
-        self.kpt_shape = model.model[-1].kpt_shape  # (batch, num_kpts, 3) 关键点预测形状
-        self.bce_pose = nn.BCEWithLogitsLoss()  # 关键点置信度损失函数
-        # Initialize keypoint loss with club weighting 初始化关键点损失函数
-        # is_pose = self.kpt_shape[0] == 17  # COCO pose has 17 keypoints # kong
-        # ================= kong =================
-        # 增加两个球杆关键点
-        is_pose = self.kpt_shape == [19, 3] if OKS_SIGMA.shape == [19] else self.kpt_shape == [17, 3]  # kong
-        # ================= kong =================
-        nkpt = self.kpt_shape[0]    # number of keypoints
+        self.kpt_shape = model.model[-1].kpt_shape
+        self.bce_pose = nn.BCEWithLogitsLoss()
+        is_pose = self.kpt_shape == [19, 3] if OKS_SIGMA.shape == [19] else self.kpt_shape == [17, 3]
+        nkpt = self.kpt_shape[0]
 
-        # ================= kong =================
         # Get club keypoint indices from model if not provided
-        # Set default club indices if not specified (last 2 keypoints)
-
         self.club_kpts_indices = club_kpts_indices
         self.club_weight = club_weight
-
         if club_kpts_indices is None:
             nkpt = self.kpt_shape[0]
-            # 默认：关键点[11,12] 作为球杆关键点,nkpt=int
-            club_kpts_indices = [11,12]
-        # ================= kong =================
-        # Debug info kong
-        # print(f"\n[Keypoint Loss] Using club keypoints indices: {club_kpts_indices} with weight: {club_weight}")
-
-        # 使用COCO评估标准中的OKS公式，引入关键点特定权重(sigmas)
-        # is_pose = False , sigmas = 1/nkpt, 原论文里sigmas称为惩罚项
+            club_kpts_indices = [11,12]  # Default club keypoints indices
         sigmas = torch.from_numpy(OKS_SIGMA).to(self.device) if is_pose else torch.ones(nkpt, device=self.device) / nkpt
-        # self.keypoint_loss = KeypointLoss(sigmas=sigmas) # kong
-        # self.keypoint_loss, self.keypoint_club_loss = KeypointLoss(sigmas, club_kpts_indices, club_weight)
         self.keypoint_loss = KeypointLoss(sigmas, club_kpts_indices, club_weight)
 
 
-    def __call__(self, preds, batch):   # 损失计算入口
+    def __call__(self, preds, batch):
         """Calculate the total loss and detach it for pose estimation."""
-        # 初始化损失向量: [box, cls, dfl, kpt, obj]
-        # loss = torch.zeros(5, device=self.device) # kong
-        loss = torch.zeros(6, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility 损失包括的5个部分,另外增加pose_club_loss？
+        loss = torch.zeros(6, device=self.device)  # box, cls, dfl, kpt_location, kpt_visibility, pose_club_loss
         feats, pred_kpts = preds if isinstance(preds[0], list) else preds[1]
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -616,30 +556,29 @@ class v8PoseLoss(v8DetectionLoss):
             keypoints[..., 0] *= imgsz[1]
             keypoints[..., 1] *= imgsz[0]
 
-            # loss[1], loss[2] = self.calculate_keypoints_loss( # kong
             loss[1], loss[2], loss[5]  = self.calculate_keypoints_loss(
                 fg_mask, target_gt_idx, keypoints, batch_idx, stride_tensor, target_bboxes, pred_kpts
-            )   # 增加 pose_club_loss
+            )
 
-        loss[0] *= self.hyp.box  # box gain     边界框损失权重 (通常0.05)
-        loss[1] *= self.hyp.pose  # pose gain   关键点位置权重 (通常0.1)
-        loss[2] *= self.hyp.kobj  # kobj gain   关键点可见性权重
-        loss[3] *= self.hyp.cls  # cls gain     分类损失权重 (通常0.5)
-        loss[4] *= self.hyp.dfl  # dfl gain     DFL损失权重 (通常0.01)
-        loss[5] *= self.hyp.pose # pose clud gain   球杆关键点位置权重（同关键点位置权重）
+        loss[0] *= self.hyp.box  # box gain
+        loss[1] *= self.hyp.pose  # pose gain
+        loss[2] *= self.hyp.kobj  # kobj gain
+        loss[3] *= self.hyp.cls  # cls gain
+        loss[4] *= self.hyp.dfl  # dfl gain
+        loss[5] *= self.hyp.pose # pose clud gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 
     @staticmethod
-    def kpts_decode(anchor_points, pred_kpts):  # 关键点编解码
+    def kpts_decode(anchor_points, pred_kpts): 
         """Decode predicted keypoints to image coordinates."""
         y = pred_kpts.clone()
-        y[..., :2] *= 2.0   # 缩放偏移量
-        y[..., 0] += anchor_points[:, [0]] - 0.5    # 调整x坐标
-        y[..., 1] += anchor_points[:, [1]] - 0.5    # 调整y坐标
+        y[..., :2] *= 2.0
+        y[..., 0] += anchor_points[:, [0]] - 0.5
+        y[..., 1] += anchor_points[:, [1]] - 0.5
         return y
 
-    def calculate_keypoints_loss(   # 关键点损失计算流程
+    def calculate_keypoints_loss(
         self, masks, target_gt_idx, keypoints, batch_idx, stride_tensor, target_bboxes, pred_kpts
     ):
         """
@@ -660,7 +599,7 @@ class v8PoseLoss(v8DetectionLoss):
 
         Returns:
             kpts_loss (torch.Tensor): The keypoints loss.
-            kpts_obj_loss (torch.Tensor): The keypoints object loss. 关键点可见性损失
+            kpts_obj_loss (torch.Tensor): The keypoints object loss. 
         """
         batch_idx = batch_idx.flatten()
         batch_size = len(masks)
@@ -668,7 +607,7 @@ class v8PoseLoss(v8DetectionLoss):
         # Find the maximum number of keypoints in a single image
         max_kpts = torch.unique(batch_idx, return_counts=True)[1].max()
 
-        # Create a tensor to hold batched keypoints 重组关键点数据
+        # Create a tensor to hold batched keypoints 
         batched_keypoints = torch.zeros(
             (batch_size, max_kpts, keypoints.shape[1], keypoints.shape[2]), device=keypoints.device
         )
@@ -682,35 +621,29 @@ class v8PoseLoss(v8DetectionLoss):
         # Expand dimensions of target_gt_idx to match the shape of batched_keypoints
         target_gt_idx_expanded = target_gt_idx.unsqueeze(-1).unsqueeze(-1)
 
-        # Use target_gt_idx_expanded to select keypoints from batched_keypoints 选取正样本关键点
+        # Use target_gt_idx_expanded to select keypoints from batched_keypoints 
         selected_keypoints = batched_keypoints.gather(
             1, target_gt_idx_expanded.expand(-1, -1, keypoints.shape[1], keypoints.shape[2])
         )
 
-        # Divide coordinates by stride 坐标归一化
+        # Divide coordinates by stride 
         selected_keypoints[..., :2] /= stride_tensor.view(1, -1, 1, 1)
 
         kpts_loss = 0
         kpts_obj_loss = 0
-        kpts_club_loss = 0  # 新增球杆关键点损失 # kong
+        kpts_club_loss = 0 
 
         if masks.any():
             gt_kpt = selected_keypoints[masks]
             area = xyxy2xywh(target_bboxes[masks])[:, 2:].prod(1, keepdim=True)
             pred_kpt = pred_kpts[masks]
-            # 计算可见性掩码，可见性过滤
             kpt_mask = gt_kpt[..., 2] != 0 if gt_kpt.shape[-1] == 3 else torch.full_like(gt_kpt[..., 0], True)
-            # kpts_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)  # pose loss 计算位置损失 kong
-            kpts_loss,  kpts_club_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area)
+            kpts_loss,  kpts_club_loss = self.keypoint_loss(pred_kpt, gt_kpt, kpt_mask, area) # pose loss
 
-            # kpts_club_loss = self.keypoint_club_loss(pred_kpt[:,11:13,:], gt_kpt[:,11:13,:], kpt_mask[:,11:13], area)    # 球杆关键点损失计算 kong
-
-            if pred_kpt.shape[-1] == 3: # 当预测包含可见性分数时
-               # 二元交叉熵(BCEWithLogitsLoss)
+            if pred_kpt.shape[-1] == 3:
                 kpts_obj_loss = self.bce_pose(pred_kpt[..., 2], kpt_mask.float())  # keypoint obj loss
 
-        # return kpts_loss, kpts_obj_loss   # kong
-        return kpts_loss, kpts_obj_loss, kpts_club_loss  # 返回三个损失值
+        return kpts_loss, kpts_obj_loss, kpts_club_loss
 
 
 class v8ClassificationLoss:
@@ -803,9 +736,7 @@ class v8OBBLoss(v8DetectionLoss):
 
         target_scores_sum = max(target_scores.sum(), 1)
 
-        # Cls loss 分类损失
-        # loss[1] = self.varifocal_loss(pred_scores, target_scores, target_labels) / target_scores_sum  # VFL way
-        # 二元交叉熵(BCEWithLogitsLoss)
+        # Cls loss 
         loss[1] = self.bce(pred_scores, target_scores.to(dtype)).sum() / target_scores_sum  # BCE
 
         # Bbox loss
@@ -817,9 +748,9 @@ class v8OBBLoss(v8DetectionLoss):
         else:
             loss[0] += (pred_angle * 0).sum()
 
-        loss[0] *= self.hyp.box  # box gain 边界框损失权重 (通常0.05)
-        loss[1] *= self.hyp.cls  # cls gain 分类损失权重 (通常0.5)
-        loss[2] *= self.hyp.dfl  # dfl gain DFL损失权重 (通常0.01)
+        loss[0] *= self.hyp.box  # box gain
+        loss[1] *= self.hyp.cls  # cls gain
+        loss[2] *= self.hyp.dfl  # dfl gain
 
         return loss.sum() * batch_size, loss.detach()  # loss(box, cls, dfl)
 

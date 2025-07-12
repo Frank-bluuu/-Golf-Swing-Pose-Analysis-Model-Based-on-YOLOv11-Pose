@@ -11,28 +11,15 @@ import torch
 
 from ultralytics.utils import LOGGER, SimpleClass, TryExcept, plt_settings
 
-"""
-    OKS_SIGMA 是一个预定义的常量，用于关键点检测任务中计算OKS。
-    OKS指标用于评估预测的关键点与真实关键点之间的相似性，是关键点检测任务中常用的性能评估指标
-    sigmas指定每个关键点分配的权重，表示不同关键点的相对重要性或标准差。sigmas值越小会使loss越大，也就是越希望哪个点准，越应该把该点的sigmas值调小。进行人体关键点观测时默认用OKS_SIGMA，定义在 metrics.py 中，OKS_SIGMA = np.array([.26, .25, .25, .35, .35, .79, .79, .72, .72, .62, .62, 1.07, 1.07, .87, .87, .89, .89]) / 10.0，否则所有点赋予同样的权重
-"""
-OKS_SIGMA = ( # default
-    np.array([0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62, 0.62, 1.07, 1.07, 0.87, 0.87, 0.89, 0.89])
-    # 将数组中的每个元素除以10.0，进行归一化处理。归一化后的sigma值通常在0到1之间。
+OKS_SIGMA = (
+    np.array([0.76, 0.75, 0.75, 0.75, 0.75, 0.49, 0.49, 0.42, 0.42, 0.32, 0.32, 0.25, 0.25, 0.57, 0.57, 0.55, 0.55, 0.55, 0.55])
     / 10.0
 )
-# ================= kong =================
-# 增加两个球杆关键点
-# OKS_SIGMA = (
-#     np.array([0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62, 0.62, 1.07, 1.07, 0.87, 0.87, 0.89, 0.89])
-#     / 10.0
-# )
 
 
 def bbox_ioa(box1, box2, iou=False, eps=1e-7):
     """
     Calculate the intersection over box2 area given box1 and box2. Boxes are in x1y1x2y2 format.
-    给定 box1 和 box2，计算 box2 区域的交集。框采用 x1y1x2y2 格式
 
     Args:
         box1 (np.ndarray): A numpy array of shape (n, 4) representing n bounding boxes.
@@ -47,7 +34,7 @@ def bbox_ioa(box1, box2, iou=False, eps=1e-7):
     b1_x1, b1_y1, b1_x2, b1_y2 = box1.T
     b2_x1, b2_y1, b2_x2, b2_y2 = box2.T
 
-    # Intersection area 交集面积
+    # Intersection area 
     inter_area = (np.minimum(b1_x2[:, None], b2_x2) - np.maximum(b1_x1[:, None], b2_x1)).clip(0) * (
         np.minimum(b1_y2[:, None], b2_y2) - np.maximum(b1_y1[:, None], b2_y1)
     ).clip(0)
@@ -101,7 +88,6 @@ def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, eps=1e-7
         box2 (torch.Tensor): A tensor representing one or more bounding boxes, with the last dimension being 4.
         xywh (bool, optional): If True, input boxes are in (x, y, w, h) format. If False, input boxes are in
                                (x1, y1, x2, y2) format.
-                               布尔值，边界框的坐标格式是否为 (x, y, w, h)
         GIoU (bool, optional): If True, calculate Generalized IoU.
         DIoU (bool, optional): If True, calculate Distance IoU.
         CIoU (bool, optional): If True, calculate Complete IoU.
@@ -171,51 +157,26 @@ def mask_iou(mask1, mask2, eps=1e-7):
 
 
 def kpt_iou(kpt1, kpt2, area, sigma, eps=1e-7):
-    """
-    Calculate Object Keypoint Similarity (OKS).
-
-    Args:
-        kpt1 (torch.Tensor): A tensor of shape (N, 17, 3) representing ground truth keypoints.
-                gt关键点的数量，17是关键点的数量，3表示每个关键点的 (x, y, v) ，其中 v 表示关键点的可见性
-        kpt2 (torch.Tensor): A tensor of shape (M, 17, 3) representing predicted keypoints.
-                pre关键点的数量
-        area (torch.Tensor): A tensor of shape (N,) representing areas from ground truth.
-        sigma (list): A list containing 17 values representing keypoint scales.
-                    关键点的标准差，形状为 [17] ，表示每个关键点的标准差
-        eps (float, optional): A small value to avoid division by zero.
-
-    Returns:
-        (torch.Tensor): A tensor of shape (N, M) representing keypoint similarities.
-    """
-    # d ：计算每个关键点对的欧氏距离平方，结果形状为(N, M, 17)
+    """Calculate Object Keypoint Similarity (OKS)."""
     d = (kpt1[:, None, :, 0] - kpt2[..., 0]).pow(2) + \
-        (kpt1[:, None, :, 1] - kpt2[..., 1]).pow(2)  # (N, M, 17)
+        (kpt1[:, None, :, 1] - kpt2[..., 1]).pow(2)  # (N, M, 19)
 
-    # 将标准差 sigma 转换为与 kpt1 相同设备和数据类型的张量
-    sigma = torch.tensor(sigma, device=kpt1.device, dtype=kpt1.dtype)  # COCO shape (17, )
-    # 检查关键点是否可见（v != 0）
-    kpt_mask = kpt1[..., 2] != 0  # (N, 17)
-    # 计算OKS的指数部分
+    sigma = torch.tensor(sigma, device=kpt1.device, dtype=kpt1.dtype)
+    kpt_mask = kpt1[..., 2] != 0  # (N, 19)
     e = d / ((2 * sigma).pow(2) * (area[:, None, None] + eps) * 2)  # from cocoeval
     # e = d / ((area[None, :, None] + eps) * sigma) ** 2 / 2  # from formula
     return ((-e).exp() * kpt_mask[:, None]).sum(-1) / (kpt_mask.sum(-1)[:, None] + eps)
 
 
 def kpt_iou_club(kpt1, kpt2, area, sigma, eps=1e-7):
-    """
-    Calculate Object with club Keypoint Similarity (OKS).
-    球杆关键点iou，参照‘kpt_iou’方法
-    """
+    """Calculate Object with club Keypoint Similarity (OKS)."""
 
-    # 只取球杆关键点 [11, 12]
     kpt1_club = kpt1[:, 11:13]
     kpt2_club = kpt2[:, 11:13]
 
     d_club = (kpt1_club[:, None, :, 0] - kpt2_club[..., 0]).pow(2) + \
              (kpt1_club[:, None, :, 1] - kpt2_club[..., 1]).pow(2)
-    # 使用球杆关键点的sigma值
     sigma = torch.tensor(sigma, device=kpt1_club.device, dtype=kpt1_club.dtype)
-    # 检查关键点是否可见（v != 0）
 
     kpt_club_mask = kpt1_club[..., 2] != 0  # (N, 2)
 
@@ -650,14 +611,6 @@ def ap_per_class(
         f1_curve (np.ndarray): F1-score curves for each class.
         x (np.ndarray): X-axis values for the curves.
         prec_values (np.ndarray): Precision values at mAP@0.5 for each class.
-
-    按置信度排序预测结果
-
-        1.计算每类的 TP/FP
-        2.计算精确率-召回率曲线
-        3.计算 AP (Average Precision)
-        4.计算 F1 分数
-        5.生成各类曲线数据
     """
     # Sort by objectness
     i = np.argsort(-conf)
@@ -986,7 +939,7 @@ class DetMetrics(SimpleClass):
         return self.box.curves_results
 
 
-class SegmentMetrics(SimpleClass):  # 分段指标
+class SegmentMetrics(SimpleClass):
     """
     Calculates and aggregates detection and segmentation metrics over a given set of classes.
 
@@ -1125,7 +1078,6 @@ class SegmentMetrics(SimpleClass):  # 分段指标
 class PoseMetrics(SegmentMetrics):
     """
     Calculates and aggregates detection and pose metrics over a given set of classes.
-    计算并汇总给定类集的检测和姿势指标
 
     Attributes:
         save_dir (Path): Path to the directory where the output plots should be saved.
@@ -1139,7 +1091,6 @@ class PoseMetrics(SegmentMetrics):
     Methods:
         process(tp_m, tp_b, conf, pred_cls, target_cls): Processes metrics over the given set of predictions.
         mean_results(): Returns the mean of the detection and segmentation metrics over all the classes.
-                        返回所有类的检测和分段指标的平均值
         class_result(i): Returns the detection and segmentation metrics of class `i`.
         maps: Returns the mean Average Precision (mAP) scores for IoU thresholds ranging from 0.50 to 0.95.
         fitness: Returns the fitness scores, which are a single weighted combination of metrics.
@@ -1160,14 +1111,9 @@ class PoseMetrics(SegmentMetrics):
         self.save_dir = save_dir
         self.plot = plot
         self.names = names
-        # 创建两个 Metric 类的实例，分别用于存储和计算边界框（box）和姿态（pose）的性能指标
         self.box = Metric()
         self.pose = Metric()
-        # ================= kong =================
-        # 新增球杆关键点指标
         self.club = Metric()
-        # ================= kong =================
-        # 初始化一个字典 self.speed ，用于存储不同阶段的处理时间
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
         self.task = "pose"
 
@@ -1185,7 +1131,7 @@ class PoseMetrics(SegmentMetrics):
             target_cls (np.ndarray): Target class indices array.
             on_plot (callable, optional): Function to call after plots are generated.
         """
-        # 处理所有关键点指标，函数计算姿态的性能指标，并获取结果
+
         results_pose = ap_per_class(
             tp_p,
             conf,
@@ -1197,11 +1143,10 @@ class PoseMetrics(SegmentMetrics):
             names=self.names,
             prefix="Pose",
         )[2:]
-        # 设置 Metric 对象 self.pose 的类别总数 ，并更新其性能指标
+
         self.pose.nc = len(self.names)
         self.pose.update(results_pose)
 
-        # 处理边界框指标，函数计算边界框的性能指标，并获取结果
         results_box = ap_per_class(
             tp,
             conf,
@@ -1213,14 +1158,12 @@ class PoseMetrics(SegmentMetrics):
             names=self.names,
             prefix="Box",
         )[2:]
-        # 设置 Metric 对象 self.box 的类别总数，并更新其性能指标
+
         self.box.nc = len(self.names)
         self.box.update(results_box)
 
-        # ================= kong =================
-        # 假设tp_p_club是球杆关键点的匹配结果
         results_club = ap_per_class(
-            tp_p_club,  # 从 models/yolo/pose/val.py 引入
+            tp_p_club,
             conf,
             pred_cls,
             target_cls,
@@ -1232,10 +1175,10 @@ class PoseMetrics(SegmentMetrics):
         )[2:]
         self.club.nc = len(self.names)
         self.club.update(results_club)
-        # ================= kong =================
+
 
     @property
-    def keys(self): # 返回所有指标键名
+    def keys(self):
         """ Return list of evaluation metric keys.
             定义属性 keys ，用于返回性能指标的键名"""
         return [
@@ -1247,39 +1190,32 @@ class PoseMetrics(SegmentMetrics):
             "metrics/recall(P)",
             "metrics/mAP50(P)",
             "metrics/mAP50-95(P)",
-            # ================= kong =================
-            # 新增球杆关键点指标
             "metrics/precision(C)",
             "metrics/recall(C)",
             "metrics/mAP50(C)",
             "metrics/mAP50-95(C)",
-            # ================= kong =================
         ]
 
-    def mean_results(self):     # 返回所有指标的平均值
+    def mean_results(self):
         """Return the mean results of box and pose."""
-        # 增加球杆关键点 kong
         return self.box.mean_results() + self.pose.mean_results()+ self.club.mean_results()
 
-    def class_result(self, i):  # 返回指定类别的结果
+    def class_result(self, i):
         """Return the class-wise detection results for a specific class i."""
-        # 增加球杆关键点 kong
         return self.box.class_result(i) + self.pose.class_result(i)+ self.club.mean_results()
 
     @property
-    def maps(self): # 返回各类别的 mAP 值
+    def maps(self):
         """Return the mean average precision (mAP) per class for both box and pose detections."""
-        # 增加球杆关键点 kong
         return self.box.maps + self.pose.maps + self.club.maps
 
     @property
-    def fitness(self):  # 返回综合评估分数
+    def fitness(self):
         """Return combined fitness score for pose and box detection."""
-        # 增加球杆关键点 kong
         return self.pose.fitness() + self.box.fitness() + self.club.fitness()
 
     @property
-    def curves(self):   # 返回曲线名称列表
+    def curves(self):
         """Return a list of curves for accessing specific metrics curves."""
         return [
             "Precision-Recall(B)",
@@ -1290,17 +1226,14 @@ class PoseMetrics(SegmentMetrics):
             "F1-Confidence(P)",
             "Precision-Confidence(P)",
             "Recall-Confidence(P)",
-            # ================= kong =================
-            # 新增球杆关键点曲线
             "Precision-Recall(C)",
             "F1-Confidence(C)",
             "Precision-Confidence(C)",
             "Recall-Confidence(C)",
-            # ================= kong =================
         ]
 
     @property
-    def curves_results(self):   # 返回曲线数据
+    def curves_results(self):
         """Return dictionary of computed performance metrics and statistics."""
         return self.box.curves_results + self.pose.curves_results + self.club.curves_results
 
