@@ -489,7 +489,7 @@ class v8PoseLoss(v8DetectionLoss):
         super().__init__(model)
         self.kpt_shape = model.model[-1].kpt_shape
         self.bce_pose = nn.BCEWithLogitsLoss()
-        is_pose = self.kpt_shape == [19, 3] if OKS_SIGMA.shape == [19] else self.kpt_shape == [17, 3]
+        is_pose = self.kpt_shape == [19, 3] if OKS_SIGMA.size == 19 else self.kpt_shape == [17, 3]
         nkpt = self.kpt_shape[0]
 
         # Get club keypoint indices from model if not provided
